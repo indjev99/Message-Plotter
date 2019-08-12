@@ -156,7 +156,7 @@ def update_partners(partners, use_chars, start_date, count_all):
 # use_chars - True to count (non-whitespace) characters, False to count messages.
 # start_date - The start date of the count/plot.
 # count_all - True to count all characters/messages ever sent, False to only count since the start date.
-def print_partners(use_chars, start_date, count_all):
+def print_partners(use_chars, start_date, count_all, to_file, file_name=''):
     start_day = max(0, date_diff(min_date, start_date)) + 1
     partners_updated = partners.copy()
     update_partners(partners_updated, use_chars, start_date, count_all)
@@ -166,24 +166,46 @@ def print_partners(use_chars, start_date, count_all):
     for p in partners_updated:
         total_received += p.sent
         total_sent += p.received
+        if not count_all:
+            total_received -= p.sent_history[start_day - 1]
+            total_sent -= p.received_history[start_day - 1]
     
+    if to_file:
+        out_file = open(file_name, "w+")
+
     if use_chars:
         title = 'Characters'
     else:
         title = 'Messages'
     title += ' received/sent'
-    if not count_all:
-        title += 'since ' + str(start_date.year) + '-' + str(start_date.month) + '-' + str(start_date.day)
-    print('\n' + title + ':\n')
+    if count_all:
+        title += ' in all time'
+    else:
+        title += ' since ' + str(start_date.year) + '-' + str(start_date.month) + '-' + str(start_date.day)
+    title += ':\n'
+    if to_file:
+        out_file.write(title + '\n')
+    else:
+        print('\n' + title)
 
-    print('Total: ' + str(extract(use_chars, total_received)) + ' Me: ' + str(extract(use_chars, total_sent)))
+    tot_str = 'Total: ' + str(extract(use_chars, total_received)) + ' Me: ' + str(extract(use_chars, total_sent))
+    if to_file:
+        out_file.write(tot_str + '\n')
+    else:
+        print(tot_str)
+    
     rank = 0
     for p in partners_updated:
         rank += 1
         if count_all:
-            print(str(rank) + '. ' + p.name + ': ' + str(extract(use_chars, p.sent)) + ' Me: ' + str(extract(use_chars, p.received)))
+            p_str = str(rank) + '. ' + p.name + ': ' + str(extract(use_chars, p.sent)) + ' Me: ' + str(extract(use_chars, p.received))
         else:
-            print(str(rank) + '. ' + p.name + ': ' + str(extract(use_chars, p.sent - p.sent_history[start_day - 1])) + ' Me: ' + str(extract(use_chars, p.received - p.received_history[start_day - 1])))
+            p_str = str(rank) + '. ' + p.name + ': ' + str(extract(use_chars, p.sent - p.sent_history[start_day - 1])) + ' Me: ' + str(extract(use_chars, p.received - p.received_history[start_day - 1]))
+        if to_file:
+            out_file.write(p_str + '\n')
+        else:
+            print(p_str)
+
 
 # use_chars - True to count (non-whitespace) characters, False to count messages.
 # start_date - The start date of the count/plot.
@@ -213,13 +235,15 @@ def plot_partners(use_chars, start_date, count_all, shown_partners, message_dire
     else:
         title = 'Messages'
     if message_direction == 'sent':
-        title += ' sent '
+        title += ' sent'
     elif message_direction == 'received':
-        title += ' received '
+        title += ' received'
     else:
-        title += ' exchanged '
-    if not count_all:
-        title += 'since ' + str(start_date.year) + '-' + str(start_date.month) + '-' + str(start_date.day)
+        title += ' exchanged'
+    if count_all:
+        title += ' in all time'
+    else:
+        title += ' since ' + str(start_date.year) + '-' + str(start_date.month) + '-' + str(start_date.day)
     plt.title(title)
 
     if use_chars:
@@ -285,7 +309,10 @@ def press(event):
     else:
         change = False
         if event.key == 'p':
-            print_partners(use_chars, start_date, count_all)
+            print_partners(use_chars, start_date, count_all, False)
+        elif event.key == 'w':
+            file_name = input('File name: ')
+            print_partners(use_chars, start_date, count_all, True, file_name)
     if change:
         plot_partners(use_chars, start_date, count_all, shown_partners, message_direction)
 
@@ -310,6 +337,7 @@ print('R - only count messages sent by the other person')
 print('B - count both')
 print('U - update the ranking (sort by bidirectional messages/characters since the start date, if applicable)')
 print('P - print total stats per person (optionally since the start date only)')
+print('W - write total stats per person to a file (optionally since the start date only)')
 
 update_partners(partners, use_chars, start_date, count_all)
 plot_partners(use_chars, start_date, count_all, shown_partners, message_direction)
