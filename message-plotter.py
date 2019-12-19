@@ -5,7 +5,7 @@ import datetime
 import sys
 import matplotlib.pyplot as plt
 
-chat_root = 'messages/inbox'
+chat_root = os.path.join('messages', 'inbox')
 month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 def fix(s):
@@ -33,26 +33,24 @@ class Count:
     def __init__(self, messages, characters):
         self.messages = messages
         self.characters = characters
-    
+
     def __add__(self, other):
         return Count(self.messages + other.messages, self.characters + other.characters)
 
     def __sub__(self, other):
         return Count(self.messages - other.messages, self.characters - other.characters)
 
-min_date = datetime.date(3000, 12, 31)
-max_date = datetime.date(1000, 1, 1)
-
 class Partner:
-    def __init__(self, name):
+    def __init__(self, name, total=False):
         self.name = name
         self.sent = Count(0, 0)
+        self.total=total
         self.received = Count(0, 0)
         self.total = Count(0, 0)
         self.sent_by_date = dict()
         self.received_by_date = dict()
 
-    def register(self, msg):
+    def register(self, msg, name=''):
         global min_date
         global max_date
         count = Count(1, count_chars(msg))
@@ -60,7 +58,7 @@ class Partner:
         date = datetime.date.fromtimestamp(msg['timestamp_ms'] / 1000)
         min_date = min(min_date, date)
         max_date = max(max_date, date)
-        if sender_name == self.name:
+        if sender_name == self.name or (self.total and sender_name == name):
             self.sent += count
             if not date in self.sent_by_date:
                 self.sent_by_date[date] = count
@@ -98,46 +96,48 @@ def extract(use_chars, x):
     else:
         return x.messages
 
-partners = []
-
 # my_name - your name on Facebook
 def load_data(my_name):
     global partners
     global min_date
     global max_date
 
-    partners = []
+    partners = [Partner('Total', total=True)]
     min_date = datetime.date(3000, 12, 31)
     max_date = datetime.date(1000, 1, 1)
 
     for f in os.listdir(chat_root):
-        file = os.path.join(chat_root, f, 'message_1.json')
-        try:
-            data = json.load(open(file, 'r'))
-        except FileNotFoundError:
-            continue
+        found = False
+        for num in range(1000):
+            msg_name = 'message_' + str(num + 1) + '.json'
+            file = os.path.join(chat_root, f, msg_name)
+            try:
+                data = json.load(open(file, 'r'))
+            except FileNotFoundError:
+                break
 
-        if data['thread_type'] != 'Regular':
-            continue
+            if num == 0:
+                if data['thread_type'] != 'Regular':
+                    break
+                try:
+                    assert(len(data['participants']) == 2 and fix(data['participants'][1]['name']) == my_name)
+                except AssertionError:
+                    print('Broken file: ' + file, file=sys.stderr)
+                    break
+                partner_name = fix(data['participants'][0]['name'])
+                if partner_name == my_name:
+                    print(partner_name + ' has the same name as you. Ignoring his messages and characters.', file=sys.stderr)
+                    break
+                partner = Partner(partner_name)
+                found = True
 
-        try:
-            assert(len(data['participants']) == 2 and fix(data['participants'][1]['name']) == my_name)
-        except AssertionError:
-            print('Broken file: ' + file, file=sys.stderr)
-            continue
-            
-        partner_name = fix(data['participants'][0]['name'])
-
-        partner = Partner(partner_name)
-
-        for msg in data['messages']:
-            partner.register(msg)
+            for msg in data['messages']:
+                partner.register(msg)
+                partners[0].register(msg, partner_name)
         
-        if partner_name == my_name:
-            print(partner_name + ' has the same name as you. Ignoring ' + str(partner.sent.messages) + ' messages with ' + str(partner.sent.characters) + ' characters.', file=sys.stderr)
-            continue
-
-        partners.append(partner)
+        if found:
+            print(f + ' ' + str(partner.total.messages))
+            partners.append(partner)
 
     for p in partners:
         p.process_histories()
@@ -160,15 +160,6 @@ def print_partners(use_chars, start_date, count_all, to_file, file_name=''):
     start_day = max(0, date_diff(min_date, start_date)) + 1
     partners_updated = partners.copy()
     update_partners(partners_updated, use_chars, start_date, count_all)
-
-    total_received = Count(0, 0)
-    total_sent = Count(0, 0)
-    for p in partners_updated:
-        total_received += p.sent
-        total_sent += p.received
-        if not count_all:
-            total_received -= p.sent_history[start_day - 1]
-            total_sent -= p.received_history[start_day - 1]
     
     if to_file:
         out_file = open(file_name, "w+")
@@ -187,36 +178,39 @@ def print_partners(use_chars, start_date, count_all, to_file, file_name=''):
         out_file.write(title + '\n')
     else:
         print('\n' + title)
-
-    tot_str = 'Total: ' + str(extract(use_chars, total_received)) + ' Me: ' + str(extract(use_chars, total_sent))
-    if to_file:
-        out_file.write(tot_str + '\n')
-    else:
-        print(tot_str)
     
     rank = 0
     for p in partners_updated:
-        rank += 1
-        if count_all:
-            p_str = str(rank) + '. ' + p.name + ': ' + str(extract(use_chars, p.sent)) + ' Me: ' + str(extract(use_chars, p.received))
+        if rank > 0:
+            rank_str = str(rank) + '. '
         else:
-            p_str = str(rank) + '. ' + p.name + ': ' + str(extract(use_chars, p.sent - p.sent_history[start_day - 1])) + ' Me: ' + str(extract(use_chars, p.received - p.received_history[start_day - 1]))
+            rank_str = ''
+        if count_all:
+            p_str = rank_str + p.name + ': ' + str(extract(use_chars, p.sent)) + ' Me: ' + str(extract(use_chars, p.received))
+        else:
+            p_str = rank_str + p.name + ': ' + str(extract(use_chars, p.sent - p.sent_history[start_day - 1])) + ' Me: ' + str(extract(use_chars, p.received - p.received_history[start_day - 1]))
         if to_file:
             out_file.write(p_str + '\n')
         else:
             print(p_str)
+        rank += 1
 
 
 # use_chars - True to count (non-whitespace) characters, False to count messages.
 # start_date - The start date of the count/plot.
 # count_all - True to count all characters/messages ever sent, False to only count since the start date.
 # shown_partners - How many people to plot (the top shown_partners by total characters/messages are plotted).
+# show_total - Whether to show the total numbers as well.
 # message_direction -  sent, received, total
-def plot_partners(use_chars, start_date, count_all, shown_partners, message_direction):
+def plot_partners(use_chars, start_date, count_all, shown_partners, show_total, message_direction):
     assert(message_direction == 'sent' or message_direction == 'received' or message_direction == 'both')
     plt.clf()
     start_day = max(0, date_diff(min_date, start_date)) + 1
-    for p in partners[:shown_partners]:
+    if show_total:
+        start_index = 0
+    else:
+        start_index = 1
+    for p in partners[start_index : shown_partners + 1]:
         if message_direction == 'sent':
             history = p.received_history
         elif message_direction == 'received':
@@ -265,6 +259,7 @@ use_chars = True
 start_date = datetime.date(2013, 1, 1)
 count_all = False
 shown_partners = 15
+show_total = False
 message_direction = 'both'
 
 def press(event):
@@ -273,6 +268,7 @@ def press(event):
     global start_date
     global count_all
     global shown_partners
+    global show_total
     global message_direction
     change = True
     if event.key == 'c' and use_chars == False:
@@ -298,6 +294,8 @@ def press(event):
     elif event.key == '-' and shown_partners > 1:
         shown_partners -= 1
         shown_partners = max(1, shown_partners)
+    elif event.key == 'x':
+        show_total = not show_total
     elif event.key == 't' and message_direction != 'sent':
         message_direction = 'sent'
     elif event.key == 'r' and message_direction != 'received':
@@ -314,32 +312,34 @@ def press(event):
             file_name = input('File name: ')
             print_partners(use_chars, start_date, count_all, True, file_name)
     if change:
-        plot_partners(use_chars, start_date, count_all, shown_partners, message_direction)
+        plot_partners(use_chars, start_date, count_all, shown_partners, show_total, message_direction)
 
-my_name = input('Enter your name on Facebook: ')
-load_data(my_name)
+if __name__ == '__main__':
+    my_name = input('Enter your name on Facebook: ')
+    load_data(my_name)
 
-fig, ax = plt.subplots()
-fig.canvas.mpl_connect('key_press_event', press)
+    fig, ax = plt.subplots()
+    fig.canvas.mpl_connect('key_press_event', press)
 
-print()
-print('Help guide:')
-print('C - count (non-whitespace) characters')
-print('M - count messages')
-print('D - change the start date')
-print('Z - only count messages since the start date')
-print('A - count all messages')
-print('N - change the number of chats to plot (top X chats sorted by messages/characters are shown)')
-print('+ - increment the above number by one')
-print('- - decrement the above number by one')
-print('T - only count messages sent by you')
-print('R - only count messages sent by the other person')
-print('B - count both')
-print('U - update the ranking (sort by bidirectional messages/characters since the start date, if applicable)')
-print('P - print total stats per person (optionally since the start date only)')
-print('W - write total stats per person to a file (optionally since the start date only)')
+    print()
+    print('Help guide:')
+    print('C - count (non-whitespace) characters')
+    print('M - count messages')
+    print('D - change the start date')
+    print('Z - only count messages since the start date')
+    print('A - count all messages')
+    print('N - change the number of chats to plot (top X chats sorted by messages/characters are shown)')
+    print('+ - increment the above number by one')
+    print('- - decrement the above number by one')
+    print('X - plot the total numbers as well (to/from all contacts) - toggle')
+    print('T - only count messages sent by you')
+    print('R - only count messages sent by the other person')
+    print('B - count both')
+    print('U - update the ranking (sort by bidirectional messages/characters since the start date, if applicable)')
+    print('P - print total stats per person (optionally since the start date only)')
+    print('W - write total stats per person to a file (optionally since the start date only)')
 
-update_partners(partners, use_chars, start_date, count_all)
-plot_partners(use_chars, start_date, count_all, shown_partners, message_direction)
+    update_partners(partners, use_chars, start_date, count_all)
+    plot_partners(use_chars, start_date, count_all, shown_partners, show_total, message_direction)
 
-plt.show()
+    plt.show()
