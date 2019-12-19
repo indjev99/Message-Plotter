@@ -136,7 +136,6 @@ def load_data(my_name):
                 partners[0].register(msg, partner_name)
         
         if found:
-            print(f + ' ' + str(partner.total.messages))
             partners.append(partner)
 
     for p in partners:
